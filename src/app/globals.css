@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #1e1e1e;
+  --terminal-bg: #1a1a1a;
+  --input-bg: #252526;
+  --text: #d4d4d4;
+  --muted: #6a737d;
+  --border: #333333;
+  --hover: #2a2d2e;
+  --selection: #264f78;
+  --error: #f85149;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--terminal-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+@keyframes blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.cursor-blink {
+  animation: blink 1s infinite;
+}
+
+.typing-dots {
+  animation: pulse 1.5s infinite;
+}
+
+/* Dynamic viewport height for mobile (accounts for browser chrome + keyboard) */
+@supports (height: 100dvh) {
+  .h-dvh { height: 100dvh; }
+}
+
+/* Mobile sidebar backdrop */
+.mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 25;
+}

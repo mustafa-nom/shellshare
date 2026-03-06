@@ -1,0 +1,15 @@
+{
+  "name": "shellshare-cli",
+  "version": "0.1.0",
+  "description": "ShellShare CLI — share your terminal in real-time",
+  "bin": {
+    "shellshare": "./bin/shellshare.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "keywords": ["terminal", "sharing", "collaborative", "cli"],
+  "license": "MIT",
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"]
+}

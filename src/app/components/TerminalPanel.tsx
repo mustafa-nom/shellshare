@@ -5,6 +5,8 @@ import type { Message, UserInfo, Suggestion } from '../lib/types';
 import { XTERM_THEME } from '../lib/constants';
 import SuggestionPanel from './SuggestionPanel';
 
+const DEFAULT_PTY_DIMS = { cols: 120, rows: 40 };
+
 interface TerminalPanelProps {
   terminalId: string;
   isActive: boolean;
@@ -26,6 +28,8 @@ interface TerminalPanelProps {
   suggestions?: Suggestion[];
   onAcceptSuggestion?: (id: string) => void;
   onRejectSuggestion?: (id: string) => void;
+  ptyDimensions?: { cols: number; rows: number };
+  isVisibleTab?: boolean;
 }
 
 function getHelpText(isAdmin: boolean, mode?: string): string {
@@ -84,6 +88,8 @@ export default function TerminalPanel({
   suggestions,
   onAcceptSuggestion,
   onRejectSuggestion,
+  ptyDimensions,
+  isVisibleTab,
 }: TerminalPanelProps) {
   const xtermContainerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<any>(null);
@@ -95,6 +101,98 @@ export default function TerminalPanel({
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Spectator scaling state
+  const [isScrollMode, setIsScrollMode] = useState(false);
+  const [currentScale, setCurrentScale] = useState(1.0);
+  const [isPortrait, setIsPortrait] = useState(true);
+  const [showScaleIndicator, setShowScaleIndicator] = useState(false);
+  const scaleIndicatorTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const spectatorObserverRef = useRef<ResizeObserver | null>(null);
+  const prevVisibleRef = useRef(isVisibleTab);
+
+  const isSpectatorInClaudeCode = mode === 'claude-code' && myRole === 'spectator';
+  const isDriverOrNormal = myRole === 'driver' || mode !== 'claude-code';
+
+  // Helper: should we use FitAddon?
+  const canFit = useCallback(() => {
+    return myRole === 'driver' || mode !== 'claude-code';
+  }, [myRole, mode]);
+
+  // Apply CSS scaling for spectators
+  const applySpectatorScaling = useCallback(() => {
+    const container = xtermContainerRef.current;
+    const xtermScreen = container?.querySelector('.xterm-screen') as HTMLElement;
+    if (!container || !xtermScreen) return;
+
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+    const xtermWidth = xtermScreen.scrollWidth;
+    const xtermHeight = xtermScreen.scrollHeight;
+
+    if (xtermWidth === 0 || xtermHeight === 0) return;
+
+    const scaleX = containerWidth / xtermWidth;
+    const scaleY = containerHeight / xtermHeight;
+    let scale = Math.min(scaleX, scaleY, 1.0);
+
+    const MIN_SCALE = isMobile ? 0.2 : 0.35;
+
+    if (scale < MIN_SCALE) {
+      // Switch to scroll mode
+      xtermScreen.style.transform = '';
+      xtermScreen.style.transformOrigin = '';
+      xtermScreen.style.marginLeft = '';
+      xtermScreen.style.marginTop = '';
+      container.style.overflow = 'auto';
+      (container.style as any).WebkitOverflowScrolling = 'touch';
+      setIsScrollMode(true);
+      setCurrentScale(scale);
+      return;
+    }
+
+    setIsScrollMode(false);
+    container.style.overflow = 'hidden';
+    xtermScreen.style.transform = `scale(${scale})`;
+    xtermScreen.style.transformOrigin = 'top left';
+
+    const scaledWidth = xtermWidth * scale;
+    const scaledHeight = xtermHeight * scale;
+    const offsetX = Math.max(0, (containerWidth - scaledWidth) / 2);
+    const offsetY = Math.max(0, (containerHeight - scaledHeight) / 2);
+    xtermScreen.style.marginLeft = `${offsetX}px`;
+    xtermScreen.style.marginTop = `${offsetY}px`;
+
+    setCurrentScale(scale);
+  }, [isMobile]);
+
+  // Clear spectator CSS
+  const clearSpectatorCSS = useCallback(() => {
+    const container = xtermContainerRef.current;
+    const xtermScreen = container?.querySelector('.xterm-screen') as HTMLElement;
+    if (xtermScreen) {
+      xtermScreen.style.transform = '';
+      xtermScreen.style.transformOrigin = '';
+      xtermScreen.style.marginLeft = '';
+      xtermScreen.style.marginTop = '';
+    }
+    if (container) {
+      container.style.overflow = '';
+      (container.style as any).WebkitOverflowScrolling = '';
+    }
+    setIsScrollMode(false);
+    setCurrentScale(1.0);
+  }, []);
+
+  // Portrait detection for mobile
+  useEffect(() => {
+    if (!isMobile) return;
+    const mq = window.matchMedia('(orientation: portrait)');
+    setIsPortrait(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsPortrait(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [isMobile]);
 
   // Initialize xterm.js
   useEffect(() => {
@@ -111,13 +209,16 @@ export default function TerminalPanel({
 
       if (disposed || !xtermContainerRef.current) return;
 
+      const isSpectator = mode === 'claude-code' && myRole === 'spectator';
+
       terminal = new Terminal({
         theme: XTERM_THEME,
         fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace",
-        fontSize: isMobile ? 14 : 13,
+        fontSize: isSpectator ? 13 : (isMobile ? 14 : 13),
         cursorBlink: true,
         allowProposedApi: true,
         scrollback: 10000,
+        disableStdin: isSpectator && isMobile,
       });
 
       fitAddon = new FitAddon();
@@ -126,7 +227,20 @@ export default function TerminalPanel({
 
       if (xtermContainerRef.current) {
         terminal.open(xtermContainerRef.current);
-        fitAddon.fit();
+
+        if (isSpectator) {
+          // Lock to PTY dimensions, don't fit
+          const dims = ptyDimensions || DEFAULT_PTY_DIMS;
+          terminal.resize(dims.cols, dims.rows);
+
+          // Hide textarea on mobile to prevent keyboard popup
+          if (isMobile) {
+            const textarea = xtermContainerRef.current.querySelector('textarea');
+            if (textarea) textarea.style.display = 'none';
+          }
+        } else {
+          fitAddon.fit();
+        }
         terminal.focus();
       }
 
@@ -138,8 +252,15 @@ export default function TerminalPanel({
         sendPtyInput(terminalId, data);
       });
 
-      // Report initial size
-      resizeTerminal(terminalId, terminal.cols, terminal.rows);
+      // Report initial size (only if driver/normal)
+      if (!isSpectator) {
+        resizeTerminal(terminalId, terminal.cols, terminal.rows);
+      }
+
+      // Apply spectator scaling after a frame
+      if (isSpectator) {
+        requestAnimationFrame(() => applySpectatorScaling());
+      }
     };
 
     init();
@@ -152,6 +273,87 @@ export default function TerminalPanel({
     };
   }, [terminalId, resizeTerminal, sendPtyInput]);
 
+  // Handle role switch (driver <-> spectator)
+  useEffect(() => {
+    const terminal = xtermRef.current;
+    if (!terminal || !fitAddonRef.current) return;
+
+    if (isDriverOrNormal) {
+      // Switched to driver or normal mode
+      clearSpectatorCSS();
+
+      // Disconnect spectator observer
+      if (spectatorObserverRef.current) {
+        spectatorObserverRef.current.disconnect();
+        spectatorObserverRef.current = null;
+      }
+
+      // Restore font size
+      terminal.options.fontSize = isMobile ? 14 : 13;
+      terminal.options.disableStdin = false;
+
+      // Show textarea again
+      if (isMobile && xtermContainerRef.current) {
+        const textarea = xtermContainerRef.current.querySelector('textarea');
+        if (textarea) (textarea as HTMLElement).style.display = '';
+      }
+
+      // Re-enable FitAddon
+      fitAddonRef.current.fit();
+      resizeTerminal(terminalId, terminal.cols, terminal.rows);
+    } else if (isSpectatorInClaudeCode) {
+      // Switched to spectator
+      terminal.options.fontSize = 13;
+
+      if (isMobile) {
+        terminal.options.disableStdin = true;
+        if (xtermContainerRef.current) {
+          const textarea = xtermContainerRef.current.querySelector('textarea');
+          if (textarea) (textarea as HTMLElement).style.display = 'none';
+        }
+      }
+
+      // Lock to PTY dimensions
+      const dims = ptyDimensions || DEFAULT_PTY_DIMS;
+      terminal.resize(dims.cols, dims.rows);
+
+      requestAnimationFrame(() => applySpectatorScaling());
+    }
+  }, [isDriverOrNormal, isSpectatorInClaudeCode]);
+
+  // When ptyDimensions change, update spectator terminal
+  useEffect(() => {
+    if (!isSpectatorInClaudeCode || !xtermRef.current || !ptyDimensions) return;
+
+    xtermRef.current.resize(ptyDimensions.cols, ptyDimensions.rows);
+    requestAnimationFrame(() => applySpectatorScaling());
+  }, [ptyDimensions?.cols, ptyDimensions?.rows, isSpectatorInClaudeCode, applySpectatorScaling]);
+
+  // Spectator ResizeObserver (watch container for scaling recalculation)
+  useEffect(() => {
+    if (!isSpectatorInClaudeCode) {
+      if (spectatorObserverRef.current) {
+        spectatorObserverRef.current.disconnect();
+        spectatorObserverRef.current = null;
+      }
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      applySpectatorScaling();
+    });
+
+    if (xtermContainerRef.current) {
+      observer.observe(xtermContainerRef.current);
+    }
+    spectatorObserverRef.current = observer;
+
+    return () => {
+      observer.disconnect();
+      spectatorObserverRef.current = null;
+    };
+  }, [isSpectatorInClaudeCode, applySpectatorScaling]);
+
   // Handle PTY output with RAF batching
   useEffect(() => {
     let pendingData = '';
@@ -163,7 +365,6 @@ export default function TerminalPanel({
         pendingData = '';
         rafScheduled = false;
       } else if (pendingData) {
-        // xterm not initialized yet, retry next frame
         requestAnimationFrame(flushPending);
       } else {
         rafScheduled = false;
@@ -185,21 +386,46 @@ export default function TerminalPanel({
 
   // Refit and focus when tab becomes active (was display:none, now visible)
   useEffect(() => {
-    if (isActive && fitAddonRef.current && xtermRef.current) {
+    if (isActive && xtermRef.current) {
       requestAnimationFrame(() => {
+        if (canFit()) {
+          fitAddonRef.current?.fit();
+          if (xtermRef.current) {
+            resizeTerminal(terminalId, xtermRef.current.cols, xtermRef.current.rows);
+          }
+        } else if (isSpectatorInClaudeCode) {
+          applySpectatorScaling();
+        }
+        xtermRef.current?.focus();
+      });
+    }
+  }, [isActive, terminalId, resizeTerminal, canFit, isSpectatorInClaudeCode, applySpectatorScaling]);
+
+  // Mobile tab switch recalculation
+  useEffect(() => {
+    const wasHidden = !prevVisibleRef.current;
+    prevVisibleRef.current = isVisibleTab;
+    if (!isVisibleTab || !wasHidden) return;
+
+    const timer = setTimeout(() => {
+      if (canFit()) {
         fitAddonRef.current?.fit();
         if (xtermRef.current) {
           resizeTerminal(terminalId, xtermRef.current.cols, xtermRef.current.rows);
-          xtermRef.current.focus();
         }
-      });
-    }
-  }, [isActive, terminalId, resizeTerminal]);
+      } else {
+        applySpectatorScaling();
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [isVisibleTab, canFit, applySpectatorScaling, resizeTerminal, terminalId]);
 
-  // Resize on container change
+  // Driver ResizeObserver (container change -> refit)
   useEffect(() => {
+    if (!isDriverOrNormal) return;
+
     const observer = new ResizeObserver(() => {
-      if (fitAddonRef.current && xtermRef.current) {
+      if (fitAddonRef.current && xtermRef.current && canFit()) {
         fitAddonRef.current.fit();
         resizeTerminal(
           terminalId,
@@ -214,7 +440,40 @@ export default function TerminalPanel({
     }
 
     return () => observer.disconnect();
-  }, [resizeTerminal]);
+  }, [isDriverOrNormal, resizeTerminal, canFit, terminalId]);
+
+  // Scale indicator show/hide
+  useEffect(() => {
+    if (!isSpectatorInClaudeCode || currentScale >= 1.0) {
+      setShowScaleIndicator(false);
+      return;
+    }
+    setShowScaleIndicator(true);
+    if (scaleIndicatorTimerRef.current) clearTimeout(scaleIndicatorTimerRef.current);
+    scaleIndicatorTimerRef.current = setTimeout(() => setShowScaleIndicator(false), 5000);
+    return () => {
+      if (scaleIndicatorTimerRef.current) clearTimeout(scaleIndicatorTimerRef.current);
+    };
+  }, [currentScale, isSpectatorInClaudeCode]);
+
+  // Mobile spectator touch handling: block horizontal scroll in scale mode
+  useEffect(() => {
+    if (!isSpectatorInClaudeCode || !isMobile || isScrollMode) return;
+
+    const container = xtermContainerRef.current;
+    if (!container) return;
+
+    const handler = (e: TouchEvent) => {
+      // Allow vertical scroll (terminal history), block horizontal (page pan)
+      if (e.touches.length === 1) {
+        // In scale mode we block default to prevent page navigation
+        e.preventDefault();
+      }
+    };
+
+    container.addEventListener('touchmove', handler, { passive: false });
+    return () => container.removeEventListener('touchmove', handler);
+  }, [isSpectatorInClaudeCode, isMobile, isScrollMode]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -240,8 +499,7 @@ export default function TerminalPanel({
       const rect = containerRef.current.getBoundingClientRect();
       const percent = ((e.clientY - rect.top) / rect.height) * 100;
       setSplitPercent(Math.min(85, Math.max(20, percent)));
-      // Refit xterm during drag for smoother experience
-      if (fitAddonRef.current) {
+      if (canFit() && fitAddonRef.current) {
         fitAddonRef.current.fit();
       }
     };
@@ -249,9 +507,10 @@ export default function TerminalPanel({
     const handleMouseUp = () => {
       setIsDragging(false);
       document.body.style.userSelect = '';
-      // Final refit after drag
-      if (fitAddonRef.current) {
+      if (canFit() && fitAddonRef.current) {
         fitAddonRef.current.fit();
+      } else if (isSpectatorInClaudeCode) {
+        applySpectatorScaling();
       }
     };
 
@@ -261,7 +520,7 @@ export default function TerminalPanel({
       const rect = containerRef.current.getBoundingClientRect();
       const percent = ((e.touches[0].clientY - rect.top) / rect.height) * 100;
       setSplitPercent(Math.min(85, Math.max(20, percent)));
-      if (fitAddonRef.current) {
+      if (canFit() && fitAddonRef.current) {
         fitAddonRef.current.fit();
       }
     };
@@ -269,8 +528,10 @@ export default function TerminalPanel({
     const handleTouchEnd = () => {
       setIsDragging(false);
       document.body.style.userSelect = '';
-      if (fitAddonRef.current) {
+      if (canFit() && fitAddonRef.current) {
         fitAddonRef.current.fit();
+      } else if (isSpectatorInClaudeCode) {
+        applySpectatorScaling();
       }
     };
 
@@ -284,7 +545,7 @@ export default function TerminalPanel({
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [isDragging]);
+  }, [isDragging, canFit, isSpectatorInClaudeCode, applySpectatorScaling]);
 
   // Handle chat input
   const handleChatSubmit = () => {
@@ -292,7 +553,6 @@ export default function TerminalPanel({
     if (!text) return;
 
     if (text.startsWith('/')) {
-      // Client-side commands
       if (text === '/help') {
         setLocalMessages((prev) => [
           ...prev,
@@ -315,7 +575,6 @@ export default function TerminalPanel({
       } else if (text === '/clear' && !isAdmin) {
         setLocalMessages([]);
       } else {
-        // Send to server
         sendCommand(text);
       }
     } else {
@@ -346,6 +605,11 @@ export default function TerminalPanel({
   const allMessages = [...messages, ...localMessages].sort((a, b) => a.ts - b.ts);
   const filteredTyping = typingUsers.filter((u) => u.id !== userId);
 
+  // Scale indicator text
+  const scalePercent = Math.round(currentScale * 100);
+  const dims = ptyDimensions || DEFAULT_PTY_DIMS;
+  const showLandscapeHint = isMobile && currentScale < 0.5 && isPortrait;
+
   return (
     <div ref={containerRef} className="flex flex-col flex-1 h-full overflow-hidden relative">
       {/* Shell pane (xterm.js) */}
@@ -354,10 +618,36 @@ export default function TerminalPanel({
           height: isMobile ? '100%' : `${splitPercent}%`,
           background: '#1a1a1a',
           display: isMobile && mobileView !== 'terminal' ? 'none' : undefined,
+          position: 'relative',
         }}
         className="overflow-hidden"
       >
         <div ref={xtermContainerRef} className="w-full h-full" />
+
+        {/* Scale indicator */}
+        {isSpectatorInClaudeCode && showScaleIndicator && currentScale < 1.0 && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 8,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: 'rgba(0,0,0,0.75)',
+              color: '#8b949e',
+              padding: '4px 12px',
+              borderRadius: 6,
+              fontSize: 11,
+              whiteSpace: 'nowrap',
+              zIndex: 10,
+              pointerEvents: 'none',
+            }}
+          >
+            {showLandscapeHint
+              ? `${scalePercent}% · Rotate for a better view`
+              : `Viewing at ${scalePercent}% — driver's terminal is ${dims.cols}x${dims.rows}`
+            }
+          </div>
+        )}
       </div>
 
       {/* Drag handle */}

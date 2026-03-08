@@ -303,16 +303,32 @@ wss.on('connection', (ws: WebSocket) => {
 
       case 'resize': {
         const roomCode = wsRoomMap.get(ws);
-        if (!roomCode) return;
+        const resizeUserId = wsUserMap.get(ws);
+        if (!roomCode || !resizeUserId) return;
+
+        const resizeRoom = roomManager.getRoom(roomCode);
+        if (!resizeRoom) return;
+
+        // In Claude Code mode, only the driver can resize the PTY
+        if (resizeRoom.mode === 'claude-code' && resizeRoom.driverId !== resizeUserId) {
+          // Silently ignore spectator resize
+          return;
+        }
+
         // Spawn PTY lazily on first resize so it uses the client's actual dimensions
         if (!roomManager.ptyManager.hasPty(roomCode, msg.terminalId)) {
-          const room = roomManager.getRoom(roomCode);
-          if (room) {
-            roomManager.ptyManager.spawnPty(room, msg.terminalId, msg.cols, msg.rows);
-          }
+          roomManager.ptyManager.spawnPty(resizeRoom, msg.terminalId, msg.cols, msg.rows);
         } else {
           roomManager.ptyManager.resizePty(roomCode, msg.terminalId, msg.cols, msg.rows);
         }
+
+        // Broadcast PTY dimensions to all users
+        roomManager.broadcast(resizeRoom, {
+          type: 'pty_dimensions',
+          terminalId: msg.terminalId,
+          cols: msg.cols,
+          rows: msg.rows,
+        });
         break;
       }
 

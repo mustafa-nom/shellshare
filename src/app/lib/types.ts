@@ -52,4 +52,5 @@ export interface RoomState {
   driverId?: string;
   suggestions?: Suggestion[];
   phases?: Phase[];
+  ptyDimensions?: Record<string, { cols: number; rows: number }>;
 }

@@ -30,6 +30,7 @@ interface TerminalViewProps {
     myRole: 'driver' | 'spectator' | null;
     suggestions: Suggestion[];
     phases: Phase[];
+    ptyDimensions: Record<string, { cols: number; rows: number }>;
     sendChat: (text: string) => void;
     sendCommand: (text: string) => void;
     sendPtyInput: (terminalId: string, input: string) => void;
@@ -177,6 +178,8 @@ function TerminalViewInner({ ws, onLeave, isMobile }: TerminalViewProps & { isMo
                 suggestions={ws.suggestions}
                 onAcceptSuggestion={ws.acceptSuggestion}
                 onRejectSuggestion={ws.rejectSuggestion}
+                ptyDimensions={ws.ptyDimensions[tab.id]}
+                isVisibleTab={!isMobile || mobileView === 'terminal'}
               />
             </div>
           ))

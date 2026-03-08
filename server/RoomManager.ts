@@ -280,6 +280,14 @@ export class RoomManager {
   }
 
   getRoomState(room: Room): RoomState {
+    const ptyDimensions: Record<string, { cols: number; rows: number }> = {};
+    for (const terminal of room.terminals) {
+      const dims = this.ptyManager.getDimensions(room.code, terminal.id);
+      if (dims) {
+        ptyDimensions[terminal.id] = dims;
+      }
+    }
+
     return {
       code: room.code,
       locked: room.locked,
@@ -292,6 +300,7 @@ export class RoomManager {
       driverId: room.driverId,
       suggestions: room.suggestions.filter(s => s.status === 'pending'),
       phases: room.phases,
+      ptyDimensions,
     };
   }
 

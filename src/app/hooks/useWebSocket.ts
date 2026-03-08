@@ -47,6 +47,7 @@ interface UseWebSocketReturn {
   myRole: 'driver' | 'spectator' | null;
   suggestions: Suggestion[];
   phases: Phase[];
+  ptyDimensions: Record<string, { cols: number; rows: number }>;
   sendChat: (text: string) => void;
   sendCommand: (text: string) => void;
   sendPtyInput: (terminalId: string, input: string) => void;
@@ -96,6 +97,7 @@ export function useWebSocket(roomCode: string, userName: string): UseWebSocketRe
   const [myRole, setMyRole] = useState<'driver' | 'spectator' | null>(null);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [phases, setPhases] = useState<Phase[]>([]);
+  const [ptyDimensions, setPtyDimensions] = useState<Record<string, { cols: number; rows: number }>>({});
 
   const connect = useCallback(() => {
     // Close any existing connection before opening a new one
@@ -165,6 +167,7 @@ export function useWebSocket(roomCode: string, userName: string): UseWebSocketRe
           setDriverId(room.driverId || null);
           setSuggestions(room.suggestions || []);
           setPhases(room.phases || []);
+          setPtyDimensions(room.ptyDimensions || {});
 
           const me = room.users.find((u: UserInfo) => u.id === msg.userId);
           if (me) {
@@ -320,6 +323,12 @@ export function useWebSocket(roomCode: string, userName: string): UseWebSocketRe
         case 'phase_removed':
           setPhases(prev => prev.filter(p => p.id !== msg.phaseId));
           break;
+        case 'pty_dimensions':
+          setPtyDimensions(prev => ({
+            ...prev,
+            [msg.terminalId]: { cols: msg.cols, rows: msg.rows },
+          }));
+          break;
         case 'admin_clear':
           setMessages([]);
           clearHandlerRef.current?.();
@@ -461,6 +470,7 @@ export function useWebSocket(roomCode: string, userName: string): UseWebSocketRe
     myRole,
     suggestions,
     phases,
+    ptyDimensions,
     requestDrive,
     releaseDrive,
     acceptSuggestion,

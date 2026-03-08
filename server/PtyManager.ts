@@ -93,6 +93,8 @@ interface PtyInstance {
   pty: PtyLike;
   batcher: PtyOutputBatcher;
   outputBuffer: OutputBuffer;
+  cols: number;
+  rows: number;
 }
 
 class PtyOutputBatcher {
@@ -240,7 +242,7 @@ export class PtyManager {
       }
     });
 
-    this.instances.set(k, { pty: ptyProcess, batcher, outputBuffer });
+    this.instances.set(k, { pty: ptyProcess, batcher, outputBuffer, cols, rows });
   }
 
   private broadcastPtyOutput(room: Room, terminalId: string, data: Buffer) {
@@ -279,10 +281,17 @@ export class PtyManager {
     if (inst?.pty.resize) {
       try {
         inst.pty.resize(cols, rows);
+        inst.cols = cols;
+        inst.rows = rows;
       } catch {
         // ignore
       }
     }
+  }
+
+  getDimensions(roomCode: string, terminalId: string): { cols: number; rows: number } | null {
+    const inst = this.instances.get(this.key(roomCode, terminalId));
+    return inst ? { cols: inst.cols, rows: inst.rows } : null;
   }
 
   killPty(roomCode: string, terminalId: string): void {

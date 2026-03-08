@@ -102,7 +102,7 @@ export default function LobbyPage() {
       <div className="w-full max-w-md px-6">
         <div className="text-center mb-10">
           <h1 className="text-4xl font-bold mb-2" style={{ color: '#d4d4d4' }}>
-            ShellShare
+            shellshare
           </h1>
           <p className="text-sm" style={{ color: '#6a737d' }}>
             multiplayer terminal sessions

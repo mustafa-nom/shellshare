@@ -95,6 +95,7 @@ export interface RoomState {
   driverId?: string;
   suggestions: Suggestion[];
   phases: Phase[];
+  ptyDimensions?: Record<string, { cols: number; rows: number }>;
 }
 
 // ─── WebSocket Messages: Client -> Server ───
@@ -156,4 +157,5 @@ export type ServerMessage =
   | { type: 'suggestion_rejected'; suggestionId: string; suggesterId: string; reason?: string }
   | { type: 'phase_added'; phase: Phase }
   | { type: 'phase_updated'; phase: Phase }
-  | { type: 'phase_removed'; phaseId: string };
+  | { type: 'phase_removed'; phaseId: string }
+  | { type: 'pty_dimensions'; terminalId: string; cols: number; rows: number };
